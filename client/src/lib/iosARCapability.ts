@@ -98,3 +98,4 @@ export function detectIOSARCapability(usdzUrl?: string): {
     canLaunchAR: true,
   };
 }
+
