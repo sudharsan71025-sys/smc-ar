@@ -199,3 +199,4 @@ export async function validateGlbAsset(buffer: Buffer): Promise<ValidationResult
     };
   }
 }
+

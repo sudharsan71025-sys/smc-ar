@@ -58,3 +58,4 @@ export async function preValidateGlbFile(file: File): Promise<{ valid: boolean; 
     };
   }
 }
+

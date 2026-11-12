@@ -52,3 +52,4 @@ export interface UploadResponseError {
 }
 
 export type UploadResponse = UploadResponseSuccess | UploadResponseError;
+

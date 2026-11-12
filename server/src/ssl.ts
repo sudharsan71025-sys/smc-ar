@@ -19,7 +19,7 @@ export function getOrCreateSSLCertificate(): { key: string; cert: string } {
     fs.mkdirSync(CERT_DIR, { recursive: true });
   }
 
-  const attrs = [{ name: 'commonName', value: 'PAYA 2 VR Local AR' }];
+  const attrs = [{ name: 'commonName', value: 'SMC - AR Local' }];
   const pems = selfsigned.generate(attrs, {
     days: 365,
     keySize: 2048,
@@ -34,3 +34,4 @@ export function getOrCreateSSLCertificate(): { key: string; cert: string } {
     cert: pems.cert,
   };
 }
+

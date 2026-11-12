@@ -15,6 +15,7 @@ import { ModelMetadata } from './types.js';
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', true);
 const HTTP_PORT = parseInt(process.env.PORT || '5000', 10);
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '5443', 10);
 const ENABLE_HTTPS = process.env.ENABLE_HTTPS !== 'false';
@@ -54,7 +55,7 @@ const upload = multer({
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
-    platform: 'PAYA 2 VR',
+    platform: 'SMC - AR',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
   });
@@ -112,9 +113,10 @@ app.post('/api/upload', (req: Request, res: Response, next: NextFunction) => {
       const { modelId } = StorageService.saveModel(req.file.buffer);
       modelMetadataCache.set(modelId, validation.metadata);
 
-      // Determine public model URL
+      // Determine public model URL with proxy awareness
       const host = req.get('host') || `localhost:${HTTP_PORT}`;
-      const protocol = req.protocol;
+      const rawProto = req.headers['x-forwarded-proto'];
+      const protocol = (Array.isArray(rawProto) ? rawProto[0] : rawProto) || req.protocol;
       const modelUrl = `${protocol}://${host}/api/models/${modelId}/model.glb`;
 
       return res.status(200).json({
@@ -231,7 +233,7 @@ const networkIp = getLocalNetworkIp();
 // Start HTTP server
 const httpServer = http.createServer(app);
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log(`[PAYA 2 VR] HTTP Server running:`);
+  console.log(`[SMC - AR] HTTP Server running:`);
   console.log(`  > Local:   http://localhost:${HTTP_PORT}`);
   console.log(`  > Network: http://${networkIp}:${HTTP_PORT}`);
 });
@@ -242,11 +244,11 @@ if (ENABLE_HTTPS) {
     const ssl = getOrCreateSSLCertificate();
     const httpsServer = https.createServer(ssl, app);
     httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
-      console.log(`[PAYA 2 VR] HTTPS Server running (WebXR Ready):`);
+      console.log(`[SMC - AR] HTTPS Server running (WebXR Ready):`);
       console.log(`  > Local:   https://localhost:${HTTPS_PORT}`);
       console.log(`  > Network: https://${networkIp}:${HTTPS_PORT}`);
     });
   } catch (sslErr) {
-    console.warn('[PAYA 2 VR] Could not start HTTPS server:', sslErr);
+    console.warn('[SMC - AR] Could not start HTTPS server:', sslErr);
   }
 }

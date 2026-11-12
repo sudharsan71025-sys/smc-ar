@@ -56,3 +56,4 @@ export interface AppError {
     | 'LOAD_FAILED';
   message: string;
 }
+

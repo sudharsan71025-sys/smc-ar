@@ -97,3 +97,4 @@ async function generateChair() {
 }
 
 generateChair().catch(console.error);
+

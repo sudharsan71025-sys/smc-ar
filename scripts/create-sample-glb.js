@@ -88,3 +88,4 @@ const glbBuffer = await io.writeBinary(doc);
 const outPath = path.join(outDir, 'paya-cube.glb');
 fs.writeFileSync(outPath, Buffer.from(glbBuffer));
 console.log(`Created sample GLB at ${outPath} (${glbBuffer.byteLength} bytes)`);
+

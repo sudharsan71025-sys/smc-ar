@@ -25,3 +25,4 @@ export const OpenCameraButton: React.FC<OpenCameraButtonProps> = ({ onClick, dis
     </div>
   );
 };
+

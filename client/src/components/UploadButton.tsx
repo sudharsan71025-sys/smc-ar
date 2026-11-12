@@ -78,3 +78,4 @@ export const UploadButton: React.FC<UploadButtonProps> = ({ onFileSelect, disabl
     </div>
   );
 };
+

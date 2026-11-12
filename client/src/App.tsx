@@ -86,8 +86,13 @@ export default function App() {
         return;
       }
 
-      // Verification passed
-      setModelUrl(data.modelUrl);
+      // Ensure modelUrl protocol matches secure page context
+      let finalModelUrl = data.modelUrl;
+      if (window.location.protocol === 'https:' && finalModelUrl.startsWith('http://')) {
+        finalModelUrl = finalModelUrl.replace('http://', 'https://');
+      }
+
+      setModelUrl(finalModelUrl);
       setMetadata(data.metadata);
       setArMode(compat.mode);
       setState('READY');

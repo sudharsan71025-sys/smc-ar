@@ -1,7 +1,7 @@
 /**
  * Official Google Scene Viewer launcher for Android devices.
  */
-export async function launchGoogleSceneViewer(modelUrl: string, modelTitle = 'PAYA 2 VR 3D Model'): Promise<void> {
+export async function launchGoogleSceneViewer(modelUrl: string, modelTitle = 'SMC - AR 3D Model'): Promise<void> {
   // Convert modelUrl to absolute URL if relative
   const absoluteUrl = new URL(modelUrl, window.location.href).href;
 
@@ -9,7 +9,7 @@ export async function launchGoogleSceneViewer(modelUrl: string, modelTitle = 'PA
   const isHttps = absoluteUrl.startsWith('https://');
 
   if (!isHttps && window.location.hostname !== 'localhost') {
-    console.warn('[PAYA 2 VR] Scene Viewer requires an HTTPS URL for external assets on Android.');
+    console.warn('[SMC - AR] Scene Viewer requires an HTTPS URL for external assets on Android.');
   }
 
   // Fallback URL if Google Play Services for AR (ARCore) needs to be installed/updated
@@ -34,3 +34,4 @@ export async function launchGoogleSceneViewer(modelUrl: string, modelTitle = 'PA
   anchor.click();
   document.body.removeChild(anchor);
 }
+

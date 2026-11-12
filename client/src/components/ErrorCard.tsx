@@ -27,3 +27,4 @@ export const ErrorCard: React.FC<ErrorCardProps> = ({ message, onRetry }) => {
     </div>
   );
 };
+
