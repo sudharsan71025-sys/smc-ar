@@ -1,203 +1,129 @@
-# PAYA 2 VR – Universal Web-Based Augmented Reality Platform
+# SMC - AR (PAYA 2 VR) – Universal Web-Based Augmented Reality Platform
 
-**PAYA 2 VR** is a mobile-first, browser-based Augmented Reality (AR) platform built from the ground up with an independent architecture. It provides an intuitive, frictionless 3D-to-real-world workflow: upload a 3D model, automatically validate and detect AR compatibility, and place it directly into the physical environment using the mobile device camera.
+**SMC - AR** is a production-oriented, mobile-first Web-Based Augmented Reality (AR) visualization platform supporting both **Android** and **Apple iOS/iPadOS** from a single unified codebase.
+
+A user uploads **one 3D model in GLB format**. The platform automatically validates the asset, converts it to USDZ for Apple devices, detects device and browser capabilities, and launches the appropriate native AR experience (WebXR / Google Scene Viewer on Android, or Apple AR Quick Look on iOS).
 
 ---
 
-## 1. Core Workflow & State Machine
+## 1. Cross-Platform Unified Architecture
 
 ```
-   ┌─────────────────────────────────────────────────────────────┐
-   │                          INITIAL                            │
-   │  "PAYA 2 VR" Brand + "Upload 3D Model" Primary Button       │
-   └──────────────────────────────┬──────────────────────────────┘
-                                  │ User selects .glb file
-                                  ▼
-   ┌─────────────────────────────────────────────────────────────┐
-   │             UPLOADING ➔ PROCESSING ➔ VALIDATING             │
-   │  Binary Header Validation ➔ glTF-Transform Mesh Inspection  │
-   └──────────────────────────────┬──────────────────────────────┘
-                                  │ Successful Validation
-                                  ▼
-   ┌─────────────────────────────────────────────────────────────┐
-   │                   CHECKING_COMPATIBILITY                    │
-   │  WebXR immersive-ar Check ➔ Scene Viewer Fallback Check    │
-   └──────────────┬───────────────────────────────┬──────────────┘
-                  │ Supported                     │ Incompatible
-                  ▼                               ▼
-   ┌─────────────────────────────┐ ┌─────────────────────────────┐
-   │            READY            │ │            ERROR            │
-   │   "Open Camera" Replaces    │ │  Case-specific clear error  │
-   │        Upload Button        │ │   with "Try Again" action   │
-   └──────────────┬──────────────┘ └─────────────────────────────┘
-                  │ User clicks "Open Camera"
-                  ▼
-   ┌─────────────────────────────────────────────────────────────┐
-   │                     AR CAMERA LAUNCH                        │
-   │  - Primary: WebXR immersive-ar (Three.js + Hit-Test)        │
-   │  - Fallback: Google Scene Viewer Native Intent (Android)    │
-   │  - Surface detection, reticle indicator, tap-to-place       │
-   └─────────────────────────────────────────────────────────────┘
+                               ┌─────────────────────────────┐
+                               │     USER UPLOADS .GLB       │
+                               └──────────────┬──────────────┘
+                                              │
+                                              ▼
+                               ┌─────────────────────────────┐
+                               │  DEEP ASSET VALIDATION      │
+                               │  glTF-Transform Inspection  │
+                               └──────────────┬──────────────┘
+                                              │
+                                              ▼
+                               ┌─────────────────────────────┐
+                               │  AUTOMATIC USDZ GENERATION  │
+                               │  glTF ➔ Pixar/Apple USDZ    │
+                               └──────────────┬──────────────┘
+                                              │
+                                              ▼
+                               ┌─────────────────────────────┐
+                               │  UNIFIED PLATFORM ROUTER    │
+                               │   (arPlatformRouter.ts)     │
+                               └──────┬───────────────┬──────┘
+                                      │               │
+                     ┌────────────────┴────┐     ┌────┴────────────────┐
+                     │   ANDROID CLIENT    │     │     IOS CLIENT      │
+                     └─────────┬───────────┘     └─────────┬───────────┘
+                               │                           │
+                   ┌───────────┴───────────┐               │
+                   │ WebXR (Primary)       │               ▼
+                   │ Scene Viewer Fallback │     ┌─────────────────────┐
+                   └───────────────────────┘     │ Apple AR Quick Look │
+                                                 │ <a rel="ar"> (USDZ) │
+                                                 └─────────────────────┘
 ```
 
 ---
 
-## 2. Design System & UI Restrictions
+## 2. Platform Pipelines
 
-The UI follows a strict, distraction-free minimalist aesthetic:
+### Android Pipeline
+- **Primary Mode**: **WebXR `immersive-ar`**
+  - Hit Test API for horizontal real-world surface detection.
+  - Three.js WebGL renderer with contact shadows.
+  - Interactive tap-to-place, drag rotation, and pinch-to-scale.
+- **Fallback Mode**: **Google Scene Viewer**
+  - Native intent launch: `intent://arvr.google.com/scene-viewer/1.0?file=...&mode=ar_only...`
+  - Automatic redirect to Google Play Services for AR (ARCore) if required.
 
-- **Color Palette**:
-  - Primary: `#2563EB` (Professional Blue)
-  - Primary Hover: `#1D4ED8`
-  - Background: `#FFFFFF` (Clean White)
-  - Secondary Background: `#F5F8FF`
-  - Text Primary: `#111827`
-  - Text Secondary: `#64748B`
-  - Border: `#E2E8F0`
-- **Strict UI Rules**:
-  - Exactly **two** primary buttons exist across the lifecycle:
-    1. `Upload 3D Model` (Initial state)
-    2. `Open Camera` (Appears ONLY after successful verification and compatibility detection, replacing the upload button)
-  - Never display both buttons simultaneously.
-  - No sidebars, navigation bars, model galleries, dashboards, or extraneous action buttons.
-
----
-
-## 3. AR Compatibility & Execution Paths
-
-The platform automatically evaluates device and browser capabilities:
-
-### Path A: WebXR Immersive-AR (Primary)
-- Verifies `window.isSecureContext` (HTTPS or localhost).
-- Checks `navigator.xr.isSessionSupported('immersive-ar')`.
-- Requests `immersive-ar` session with `hit-test` and `dom-overlay`.
-- Provides a Three.js surface-detection reticle, touch tap-to-place, rotation gestures, pinch-to-scale, and soft contact shadows.
-
-### Path B: Google Scene Viewer (Android Native Fallback)
-- If WebXR is unsupported or fails to initialize, the platform checks for Android with Chrome/compatible browser.
-- Launches Google Scene Viewer via the official intent:
-  `intent://arvr.google.com/scene-viewer/1.0?file=<ENCODED_HTTPS_URL>&mode=ar_only&resizable=true#Intent;scheme=https;package=com.google.ar.core;action=android.intent.action.VIEW;S.browser_fallback_url=...;end;`
-- Allows native ARCore handling of environmental tracking and surface placement.
-
-### Path C: Incompatible Device
-- If neither WebXR nor Scene Viewer is supported, displays:
-  *"AR is not supported on your current device or browser. Your device cannot use either of the supported AR modes. Please try a compatible Android device and browser."*
+### iOS / iPadOS Pipeline
+- **Engine**: **Apple AR Quick Look**
+  - Automatically converts uploaded `.glb` files to `.usdz` on the backend.
+  - Preserves PBR materials (`UsdPreviewSurface`), textures, UV coordinates, and physical meter scales (`metersPerUnit = 1`, `upAxis = "Y"`).
+  - Feature-detects Safari Quick Look support via `anchor.relList.supports('ar')`.
+  - Served with standard MIME type `model/vnd.usdz+zip`.
+  - Launches native Apple AR Quick Look with real-world surface placement, lighting estimation, and pinch-to-scale.
 
 ---
 
-## 4. Failure Handling Specifications
+## 3. Strict Minimalist UI & State Machine
 
-| Condition | User-Facing Error Message |
-| :--- | :--- |
-| **Invalid GLB Container** | *"Invalid 3D model. Please upload a valid GLB file."* |
-| **Corrupted Model / Broken Mesh** | *"Unable to process this 3D model. Please try another file."* |
-| **AR Unsupported** | *"AR is not supported on your current device or browser. Your device cannot use either of the supported AR modes. Please try a compatible Android device and browser."* |
-| **Camera Permission Denied** | *"Camera permission is required to start the AR experience. Please enable camera access in your browser settings."* |
-| **Missing HTTPS Context** | *"Secure HTTPS access is required for the AR camera experience."* |
-| **WebXR Init Failure (Android)** | Automatically invokes Google Scene Viewer fallback. |
+The interface strictly contains **two primary interaction buttons** across its entire lifecycle:
+1. `Upload 3D Model` (Initial state)
+2. `Open Camera` (Appears **only** after verification and compatibility detection pass, replacing the Upload button)
+
+### Processing Status Progression
+- **Android**: `Uploading` ➔ `Processing Model` ➔ `Validating Geometry` ➔ `Checking Materials` ➔ `Checking AR Compatibility` ➔ `Ready`.
+- **iOS**: `Uploading` ➔ `Validating GLB` ➔ `Preparing USDZ` ➔ `Validating USDZ` ➔ `Checking AR Compatibility` ➔ `Ready`.
 
 ---
 
-## 5. Getting Started
+## 4. Backend Endpoints
 
-### Prerequisites
-- Node.js >= 18.0.0 (Tested on Node v24)
-- npm >= 9.0.0
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/health` | Health check and platform verification |
+| `POST` | `/api/upload` | Validates GLB, converts to USDZ, saves both, returns `modelUrl` and `usdzUrl` |
+| `GET` | `/api/models/:id/model.glb` | Streams binary GLB for Android (`model/gltf-binary`) |
+| `GET` | `/api/models/:id/model.usdz` | Streams binary USDZ for iOS (`model/vnd.usdz+zip`) |
+| `GET` | `/api/models/:id/assets` | Returns unified asset descriptor (GLB + USDZ URLs) |
+| `POST` | `/api/models/:id/prepare-ios` | On-demand USDZ conversion endpoint |
 
-### Installation
-Clone the repository and install dependencies:
-```bash
-# Install root dependencies
-npm install
+---
 
-# Install server dependencies
-cd server && npm install
+## 5. Automated Test Suite (53 Tests)
 
-# Install client dependencies
-cd ../client && npm install
-cd ..
-```
+Run the full unified test suite covering Android, iOS, and Core pipelines:
 
-### Running Tests
-Execute the end-to-end automated test suite:
 ```bash
 npm test
 ```
-The test suite covers:
-- Binary header validation (magic bytes, version, length, chunk offsets).
-- Deep glTF asset inspection (mesh count, vertex count, triangle count, normals, UVs, dimensions).
-- Storage and path traversal security.
-- HTTP REST API endpoints (`/api/health`, `/api/upload`, `/api/models/:id/model.glb`).
+
+### Coverage:
+- **Binary Header Validation**: Magic number, version, declared length bounds, chunk offsets.
+- **Deep Model Inspection**: Mesh count, vertex count, triangle count, normals, UVs, dimensions.
+- **iOS USDZ Conversion Engine**: glTF-to-USDZ conversion, USDZ container verification, multi-material USDZ conversion.
+- **Storage & Security**: UUID validation, path traversal guards, combined cleanup.
+- **HTTP REST API Integration**: Android GLB streaming, iOS USDZ streaming, assets descriptor, error responses.
 
 ---
 
-## 6. Development & Production Execution
+## 6. Real-Device Testing Instructions
 
-### Running Development Mode
-Run both frontend and backend concurrently:
-```bash
-npm run dev
-```
-- Client runs at: `http://localhost:3000` (proxies `/api` to port 5000)
-- Backend runs at: `http://localhost:5000` (HTTP) and `https://localhost:5443` (HTTPS)
-
-### Building for Production
-```bash
-npm run build
-```
-This builds both TypeScript server (`server/dist`) and Vite production client (`client/dist`).
-
-### Running Production Server
-```bash
-npm start
-```
-The server serves both the static production frontend and the upload/model API endpoints.
-
----
-
-## 7. Real-Device Testing on Android
-
-WebXR requires a **Secure Context** (`HTTPS` or `localhost`). When testing on an Android phone over local Wi-Fi:
-
-### Option 1: Direct HTTPS (Built-in)
-PAYA 2 VR generates a local self-signed SSL certificate automatically on startup:
-1. Connect your Android phone to the same Wi-Fi network as your computer.
-2. Start the server (`npm start`).
-3. Note the Network HTTPS URL displayed in the console:
+### iOS (iPhone & iPad)
+1. Open the live HTTPS URL in **Safari**:
    ```
-   > Network: https://192.168.x.x:5443
+   https://gibraltar-auditor-posing-advisor.trycloudflare.com
    ```
-4. Open Chrome on Android, navigate to `https://192.168.x.x:5443`, tap *Advanced* -> *Proceed to site (unsafe)*.
-5. Upload a model and tap **Open Camera** to launch WebXR!
+   *(or your custom Render HTTPS domain)*
+2. Tap **Upload 3D Model** and pick `paya-cube.glb` or `paya-chair.glb`.
+3. The UI will show: `Uploading` ➔ `Validating GLB` ➔ `Preparing USDZ` ➔ `Validating USDZ` ➔ `Checking AR Compatibility` ➔ `Ready`.
+4. Tap **Open Camera** to launch Apple AR Quick Look in your room!
 
-### Option 2: Chrome Remote USB Debugging (Recommended)
-1. Connect your Android phone via USB and enable USB Debugging.
-2. In desktop Chrome, open `chrome://inspect/#devices`.
-3. Configure Port Forwarding:
-   - Port `5000` -> `localhost:5000`
-4. On your mobile Chrome browser, navigate to `http://localhost:5000`.
-   *(Because Chrome treats `localhost` as a Secure Context, WebXR is enabled without SSL warnings!)*
-
-### Option 3: Public Tunnel (e.g. Cloudflared / Ngrok)
-For testing Google Scene Viewer across external networks:
-```bash
-npx localtunnel --port 5000
-# or
-cloudflared tunnel --url http://localhost:5000
-```
-
----
-
-## 8. Sample Models Included
-
-The repository includes pre-generated, verified 3D assets in `sample-models/`:
-- `sample-models/paya-cube.glb`: Standard 30cm tabletop blue cube with realistic normals, UV coordinates, and PBR materials.
-- `sample-models/paya-chair.glb`: Realistic multi-material model (wood seat/back, metal frame) with 6 primitives and 144 vertices.
-
-To generate new sample assets at any time:
-```bash
-npm --prefix server run build
-npx --prefix server tsx server/src/create-sample.ts
-npx --prefix server tsx server/src/create-chair.ts
-```
-
+### Android
+1. Open the live HTTPS URL in **Chrome**:
+   ```
+   https://gibraltar-auditor-posing-advisor.trycloudflare.com
+   ```
+2. Tap **Upload 3D Model** and pick your `.glb` file.
+3. Tap **Open Camera** to launch WebXR AR with surface hit testing.

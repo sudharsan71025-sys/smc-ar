@@ -33,9 +33,11 @@ export async function detectARCompatibility(): Promise<ARCompatibilityResult> {
   if (webXRSupported && webXRHitTestSupported) {
     return {
       mode: 'webxr',
+      platform: 'android',
       supported: true,
       isSecureContext: isSecure,
-      isAndroid,
+      isAndroid: true,
+      isIOS: false,
     };
   }
 
@@ -44,10 +46,12 @@ export async function detectARCompatibility(): Promise<ARCompatibilityResult> {
   if (isAndroid && isChromeOrCompatible) {
     return {
       mode: 'scene-viewer',
+      platform: 'android',
       supported: true,
       reason: 'WebXR unavailable. Using Android Scene Viewer native fallback.',
       isSecureContext: isSecure,
       isAndroid: true,
+      isIOS: false,
     };
   }
 
@@ -59,9 +63,11 @@ export async function detectARCompatibility(): Promise<ARCompatibilityResult> {
 
   return {
     mode: 'none',
+    platform: isAndroid ? 'android' : 'other',
     supported: false,
     reason,
     isSecureContext: isSecure,
     isAndroid,
+    isIOS: false,
   };
 }

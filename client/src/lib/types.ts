@@ -9,7 +9,9 @@ export type AppState =
   | 'AR_ACTIVE'
   | 'ERROR';
 
-export type ARMode = 'webxr' | 'scene-viewer' | 'none';
+export type ARMode = 'webxr' | 'scene-viewer' | 'quick-look' | 'none';
+
+export type PlatformType = 'android' | 'ios' | 'other';
 
 export interface Vector3D {
   x: number;
@@ -35,25 +37,31 @@ export interface ModelMetadata {
   hasNormals: boolean;
   hasTangents: boolean;
   hasTexCoords: boolean;
+  usdzSize?: number;
 }
 
 export interface ARCompatibilityResult {
   mode: ARMode;
+  platform: PlatformType;
   supported: boolean;
   reason?: string;
   isSecureContext: boolean;
   isAndroid: boolean;
+  isIOS: boolean;
+  usdzUrl?: string;
 }
 
 export interface AppError {
   type:
     | 'INVALID_GLB'
     | 'CORRUPTED_MODEL'
+    | 'USDZ_CONVERSION_FAILURE'
+    | 'USDZ_VALIDATION_FAILURE'
     | 'UNSUPPORTED_AR'
     | 'CAMERA_PERMISSION_DENIED'
     | 'HTTPS_MISSING'
     | 'SESSION_INIT_FAILED'
+    | 'QUICK_LOOK_LAUNCH_FAILED'
     | 'LOAD_FAILED';
   message: string;
 }
-

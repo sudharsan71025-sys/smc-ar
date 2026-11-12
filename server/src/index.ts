@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import { validateGlbAsset } from './validator.js';
 import { StorageService } from './storage.js';
 import { getOrCreateSSLCertificate } from './ssl.js';
+import { convertGlbToUsdz } from './usdzConversionService.js';
 import { ModelMetadata } from './types.js';
 
 dotenv.config();
@@ -111,18 +112,41 @@ app.post('/api/upload', (req: Request, res: Response, next: NextFunction) => {
 
       // Save valid model to temporary storage
       const { modelId } = StorageService.saveModel(req.file.buffer);
-      modelMetadataCache.set(modelId, validation.metadata);
 
-      // Determine public model URL with proxy awareness
+      // Determine public URLs with proxy awareness
       const host = req.get('host') || `localhost:${HTTP_PORT}`;
       const rawProto = req.headers['x-forwarded-proto'];
       const protocol = (Array.isArray(rawProto) ? rawProto[0] : rawProto) || req.protocol;
       const modelUrl = `${protocol}://${host}/api/models/${modelId}/model.glb`;
 
+      // Automatic GLB-to-USDZ conversion for iOS Apple AR Quick Look
+      let usdzUrl: string | undefined = undefined;
+      let conversionStatus: 'success' | 'failed' | 'skipped' = 'skipped';
+
+      try {
+        const usdzRes = await convertGlbToUsdz(req.file.buffer);
+        if (usdzRes.success && usdzRes.usdzBuffer) {
+          StorageService.saveUSDZ(modelId, usdzRes.usdzBuffer);
+          usdzUrl = `${protocol}://${host}/api/models/${modelId}/model.usdz`;
+          conversionStatus = 'success';
+          validation.metadata.usdzSize = usdzRes.fileSize;
+        } else {
+          conversionStatus = 'failed';
+          console.warn('[PAYA 2 VR] USDZ conversion failed for iOS:', usdzRes.details);
+        }
+      } catch (convErr: any) {
+        conversionStatus = 'failed';
+        console.error('[PAYA 2 VR] USDZ conversion exception:', convErr?.message);
+      }
+
+      modelMetadataCache.set(modelId, validation.metadata);
+
       return res.status(200).json({
         success: true,
         modelId,
         modelUrl,
+        usdzUrl,
+        conversionStatus,
         metadata: validation.metadata,
       });
     } catch (validationErr: any) {
@@ -173,6 +197,142 @@ app.get('/api/models/:id/model.glb', (req: Request, res: Response) => {
   } else {
     res.setHeader('Content-Length', stat.size);
     fs.createReadStream(filePath).pipe(res);
+  }
+});
+
+/**
+ * Serve USDZ model binary for Apple AR Quick Look on iOS
+ * Uses standard MIME type: model/vnd.usdz+zip
+ */
+app.get('/api/models/:id/model.usdz', (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const filePath = StorageService.getUSDZPath(id);
+
+  if (!filePath) {
+    return res.status(404).json({
+      success: false,
+      message: 'USDZ model not found or has not been generated yet.',
+    });
+  }
+
+  const stat = fs.statSync(filePath);
+  const range = req.headers.range;
+
+  res.setHeader('Content-Type', 'model/vnd.usdz+zip');
+  res.setHeader('Content-Disposition', 'inline; filename="model.usdz"');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    const chunksize = end - start + 1;
+    const file = fs.createReadStream(filePath, { start, end });
+
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+      'Content-Length': chunksize,
+    });
+    file.pipe(res);
+  } else {
+    res.setHeader('Content-Length', stat.size);
+    fs.createReadStream(filePath).pipe(res);
+  }
+});
+
+/**
+ * Retrieve unified model assets (GLB + USDZ) and status
+ */
+app.get('/api/models/:id/assets', (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const glbPath = StorageService.getModelPath(id);
+
+  if (!glbPath) {
+    return res.status(404).json({ success: false, message: 'Model not found.' });
+  }
+
+  const host = req.get('host') || `localhost:${HTTP_PORT}`;
+  const rawProto = req.headers['x-forwarded-proto'];
+  const protocol = (Array.isArray(rawProto) ? rawProto[0] : rawProto) || req.protocol;
+
+  const glbUrl = `${protocol}://${host}/api/models/${id}/model.glb`;
+  const hasUsdz = StorageService.hasUSDZ(id);
+  const usdzUrl = hasUsdz ? `${protocol}://${host}/api/models/${id}/model.usdz` : undefined;
+  const metadata = modelMetadataCache.get(id);
+
+  return res.json({
+    success: true,
+    modelId: id,
+    glbUrl,
+    usdzUrl,
+    hasUsdz,
+    metadata,
+  });
+});
+
+/**
+ * On-demand USDZ conversion endpoint
+ */
+app.post('/api/models/:id/prepare-ios', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const glbPath = StorageService.getModelPath(id);
+
+  if (!glbPath) {
+    return res.status(404).json({ success: false, message: 'Source GLB model not found.' });
+  }
+
+  const host = req.get('host') || `localhost:${HTTP_PORT}`;
+  const rawProto = req.headers['x-forwarded-proto'];
+  const protocol = (Array.isArray(rawProto) ? rawProto[0] : rawProto) || req.protocol;
+
+  // Check if already converted
+  if (StorageService.hasUSDZ(id)) {
+    return res.json({
+      success: true,
+      modelId: id,
+      usdzUrl: `${protocol}://${host}/api/models/${id}/model.usdz`,
+      status: 'cached',
+    });
+  }
+
+  try {
+    const glbBuffer = fs.readFileSync(glbPath);
+    const usdzRes = await convertGlbToUsdz(glbBuffer);
+
+    if (!usdzRes.success || !usdzRes.usdzBuffer) {
+      return res.status(500).json({
+        success: false,
+        error: 'USDZ_CONVERSION_FAILURE',
+        message: 'Unable to prepare your 3D model for iPhone AR. Please try another model.',
+        details: usdzRes.details,
+      });
+    }
+
+    StorageService.saveUSDZ(id, usdzRes.usdzBuffer);
+    const usdzUrl = `${protocol}://${host}/api/models/${id}/model.usdz`;
+
+    const meta = modelMetadataCache.get(id);
+    if (meta) {
+      meta.usdzSize = usdzRes.fileSize;
+      modelMetadataCache.set(id, meta);
+    }
+
+    return res.json({
+      success: true,
+      modelId: id,
+      usdzUrl,
+      status: 'converted',
+      fileSize: usdzRes.fileSize,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: 'USDZ_CONVERSION_FAILURE',
+      message: 'Unable to prepare your 3D model for iPhone AR. Please try another model.',
+      details: err?.message,
+    });
   }
 });
 

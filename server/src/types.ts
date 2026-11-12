@@ -22,6 +22,7 @@ export interface ModelMetadata {
   hasNormals: boolean;
   hasTangents: boolean;
   hasTexCoords: boolean;
+  usdzSize?: number;
 }
 
 export interface ValidationSuccess {
@@ -42,6 +43,8 @@ export interface UploadResponseSuccess {
   success: true;
   modelId: string;
   modelUrl: string;
+  usdzUrl?: string;
+  conversionStatus: 'success' | 'failed' | 'skipped';
   metadata: ModelMetadata;
 }
 
@@ -49,7 +52,16 @@ export interface UploadResponseError {
   success: false;
   errorType: string;
   message: string;
+  details?: string;
 }
 
 export type UploadResponse = UploadResponseSuccess | UploadResponseError;
 
+export interface AssetInfoResponse {
+  success: boolean;
+  modelId: string;
+  glbUrl: string;
+  usdzUrl?: string;
+  hasUsdz: boolean;
+  metadata?: ModelMetadata;
+}

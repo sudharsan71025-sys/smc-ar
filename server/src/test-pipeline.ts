@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { validateGlbBinaryHeader, validateGlbAsset } from './validator.js';
 import { StorageService } from './storage.js';
+import { convertGlbToUsdz, validateUsdzBinary } from './usdzConversionService.js';
 
 let passed = 0;
 let failed = 0;
@@ -18,17 +19,21 @@ function assert(condition: boolean, testName: string) {
 
 async function runTests() {
   console.log('==================================================');
-  console.log('PAYA 2 VR – Automated End-to-End Test Suite');
+  console.log('PAYA 2 VR / SMC - AR – Unified Test Suite');
   console.log('==================================================\n');
 
-  const validGlbPath = path.resolve(process.cwd(), '../sample-models/paya-cube.glb');
+  const samplePaths = [
+    path.resolve(process.cwd(), 'sample-models/paya-cube.glb'),
+    path.resolve(process.cwd(), '../sample-models/paya-cube.glb'),
+  ];
+  const validGlbPath = samplePaths.find((p) => fs.existsSync(p)) || samplePaths[0];
   if (!fs.existsSync(validGlbPath)) {
     throw new Error(`Sample GLB missing at ${validGlbPath}`);
   }
   const validBuffer = fs.readFileSync(validGlbPath);
 
   // ----------------------------------------------------
-  console.log('1. Binary Header Validation Tests');
+  console.log('1. Binary Header Validation Tests (Android & Core)');
   // ----------------------------------------------------
   const validHeader = validateGlbBinaryHeader(validBuffer);
   assert(validHeader.valid === true, 'Valid GLB binary container recognized');
@@ -56,7 +61,7 @@ async function runTests() {
   assert(truncRes.valid === false, 'Rejects truncated GLB containers');
 
   // ----------------------------------------------------
-  console.log('\n2. Deep Model & Geometry Inspection Tests');
+  console.log('\n2. Deep Model & Geometry Inspection Tests (Android & Core)');
   // ----------------------------------------------------
   const validAsset = await validateGlbAsset(validBuffer);
   assert(validAsset.isValid === true, 'Deep asset validation succeeds for valid model');
@@ -75,7 +80,11 @@ async function runTests() {
   }
 
   // Multi-material chair validation test
-  const chairPath = path.resolve(process.cwd(), '../sample-models/paya-chair.glb');
+  const chairPaths = [
+    path.resolve(process.cwd(), 'sample-models/paya-chair.glb'),
+    path.resolve(process.cwd(), '../sample-models/paya-chair.glb'),
+  ];
+  const chairPath = chairPaths.find((p) => fs.existsSync(p)) || chairPaths[0];
   if (fs.existsSync(chairPath)) {
     const chairBuffer = fs.readFileSync(chairPath);
     const chairAsset = await validateGlbAsset(chairBuffer);
@@ -101,25 +110,60 @@ async function runTests() {
   }
 
   // ----------------------------------------------------
-  console.log('\n3. Storage & Security Tests');
+  console.log('\n3. iOS GLB-to-USDZ Conversion & Quick Look Engine Tests');
+  // ----------------------------------------------------
+  // Test USDZ container validator with bad buffers
+  const badUsdz = validateUsdzBinary(Buffer.from('not a zip archive at all'));
+  assert(badUsdz.valid === false, 'Rejects invalid USDZ signature');
+
+  // Convert valid cube GLB to USDZ
+  const usdzCubeRes = await convertGlbToUsdz(validBuffer);
+  assert(usdzCubeRes.success === true, 'GLB to USDZ conversion succeeds for cube');
+  assert(Boolean(usdzCubeRes.usdzBuffer && usdzCubeRes.usdzBuffer.length > 500), 'Generated non-empty USDZ archive (>500 bytes)');
+
+  if (usdzCubeRes.usdzBuffer) {
+    const valRes = validateUsdzBinary(usdzCubeRes.usdzBuffer);
+    assert(valRes.valid === true, 'Generated USDZ passes container structure verification');
+  }
+
+  // Convert multi-material chair GLB to USDZ
+  if (fs.existsSync(chairPath)) {
+    const chairBuf = fs.readFileSync(chairPath);
+    const usdzChairRes = await convertGlbToUsdz(chairBuf);
+    assert(usdzChairRes.success === true, 'GLB to USDZ conversion succeeds for multi-material chair');
+    assert(Boolean(usdzChairRes.usdzBuffer && usdzChairRes.usdzBuffer.length > 2000), 'Generated multi-material USDZ archive (>2000 bytes)');
+  }
+
+  // ----------------------------------------------------
+  console.log('\n4. Storage & Security Tests (GLB + USDZ)');
   // ----------------------------------------------------
   const saved = StorageService.saveModel(validBuffer);
-  assert(Boolean(saved.modelId && saved.filePath), 'Model saved with secure UUID');
-  assert(fs.existsSync(saved.filePath), 'Saved model file exists on disk');
+  assert(Boolean(saved.modelId && saved.filePath), 'GLB Model saved with secure UUID');
+  assert(fs.existsSync(saved.filePath), 'Saved GLB model file exists on disk');
+
+  if (usdzCubeRes.usdzBuffer) {
+    const savedUsdz = StorageService.saveUSDZ(saved.modelId, usdzCubeRes.usdzBuffer);
+    assert(Boolean(savedUsdz && fs.existsSync(savedUsdz.filePath)), 'USDZ asset saved with same model UUID');
+    assert(StorageService.hasUSDZ(saved.modelId) === true, 'hasUSDZ reports true');
+    assert(StorageService.getUSDZPath(saved.modelId) === savedUsdz?.filePath, 'getUSDZPath returns correct path');
+  }
 
   const retrievedPath = StorageService.getModelPath(saved.modelId);
   assert(retrievedPath === saved.filePath, 'Model path retrieved correctly via valid UUID');
 
   // Path traversal test
   const traversalPath = StorageService.getModelPath('../../../etc/passwd');
-  assert(traversalPath === null, 'Rejects path traversal injection attempts');
+  assert(traversalPath === null, 'Rejects path traversal injection attempts on GLB');
+  const traversalUsdz = StorageService.getUSDZPath('../../../etc/passwd');
+  assert(traversalUsdz === null, 'Rejects path traversal injection attempts on USDZ');
 
   const deleted = StorageService.deleteModel(saved.modelId);
-  assert(deleted === true, 'Storage successfully cleans up model');
-  assert(StorageService.getModelPath(saved.modelId) === null, 'Model no longer accessible after deletion');
+  assert(deleted === true, 'Storage successfully cleans up model assets (GLB + USDZ)');
+  assert(StorageService.getModelPath(saved.modelId) === null, 'GLB model no longer accessible after deletion');
+  assert(StorageService.getUSDZPath(saved.modelId) === null, 'USDZ model no longer accessible after deletion');
 
   // ----------------------------------------------------
-  console.log('\n4. Summary');
+  console.log('\n5. Summary');
   // ----------------------------------------------------
   console.log(`Passed: ${passed}/${passed + failed}`);
   if (failed > 0) {

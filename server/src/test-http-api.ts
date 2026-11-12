@@ -6,6 +6,7 @@ import cors from 'cors';
 import multer from 'multer';
 import { validateGlbAsset } from './validator.js';
 import { StorageService } from './storage.js';
+import { convertGlbToUsdz } from './usdzConversionService.js';
 
 let passed = 0;
 let failed = 0;
@@ -36,7 +37,7 @@ const upload = multer({
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', platform: 'PAYA 2 VR' });
+  res.json({ status: 'ok', platform: 'SMC - AR' });
 });
 
 app.post('/api/upload', (req, res) => {
@@ -70,10 +71,29 @@ app.post('/api/upload', (req, res) => {
       const { modelId } = StorageService.saveModel(req.file.buffer);
       const modelUrl = `/api/models/${modelId}/model.glb`;
 
+      // Convert to USDZ for iOS
+      let usdzUrl: string | undefined = undefined;
+      let conversionStatus = 'skipped';
+      try {
+        const usdzRes = await convertGlbToUsdz(req.file.buffer);
+        if (usdzRes.success && usdzRes.usdzBuffer) {
+          StorageService.saveUSDZ(modelId, usdzRes.usdzBuffer);
+          usdzUrl = `/api/models/${modelId}/model.usdz`;
+          conversionStatus = 'success';
+          validation.metadata.usdzSize = usdzRes.fileSize;
+        } else {
+          conversionStatus = 'failed';
+        }
+      } catch {
+        conversionStatus = 'failed';
+      }
+
       return res.status(200).json({
         success: true,
         modelId,
         modelUrl,
+        usdzUrl,
+        conversionStatus,
         metadata: validation.metadata,
       });
     } catch {
@@ -98,9 +118,39 @@ app.get('/api/models/:id/model.glb', (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
+app.get('/api/models/:id/model.usdz', (req, res) => {
+  const id = String(req.params.id);
+  const filePath = StorageService.getUSDZPath(id);
+  if (!filePath) {
+    return res.status(404).json({ success: false, message: 'USDZ not found' });
+  }
+
+  res.setHeader('Content-Type', 'model/vnd.usdz+zip');
+  res.setHeader('Content-Disposition', 'inline; filename="model.usdz"');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  fs.createReadStream(filePath).pipe(res);
+});
+
+app.get('/api/models/:id/assets', (req, res) => {
+  const id = String(req.params.id);
+  const glbPath = StorageService.getModelPath(id);
+  if (!glbPath) {
+    return res.status(404).json({ success: false, message: 'Not found' });
+  }
+
+  const hasUsdz = StorageService.hasUSDZ(id);
+  res.json({
+    success: true,
+    modelId: id,
+    glbUrl: `/api/models/${id}/model.glb`,
+    usdzUrl: hasUsdz ? `/api/models/${id}/model.usdz` : undefined,
+    hasUsdz,
+  });
+});
+
 async function runHttpTests() {
   console.log('==================================================');
-  console.log('PAYA 2 VR – HTTP Integration Tests');
+  console.log('PAYA 2 VR / SMC - AR – HTTP Integration Tests');
   console.log('==================================================\n');
 
   const server = http.createServer(app);
@@ -108,14 +158,19 @@ async function runHttpTests() {
   const port = (server.address() as any).port;
   const baseUrl = `http://127.0.0.1:${port}`;
 
+  const samplePaths = [
+    path.resolve(process.cwd(), 'sample-models/paya-cube.glb'),
+    path.resolve(process.cwd(), '../sample-models/paya-cube.glb'),
+  ];
+  const validGlbPath = samplePaths.find((p) => fs.existsSync(p)) || samplePaths[0];
+
   try {
     // 1. Health check test
     const healthRes = await fetch(`${baseUrl}/api/health`);
     const healthData = (await healthRes.json()) as any;
     assert(healthRes.status === 200 && healthData.status === 'ok', 'GET /api/health returns 200 OK');
 
-    // 2. Valid GLB Upload
-    const validGlbPath = path.resolve(process.cwd(), '../sample-models/paya-cube.glb');
+    // 2. Valid GLB Upload & Automatic iOS USDZ Conversion
     const validBlob = new Blob([fs.readFileSync(validGlbPath)], { type: 'model/gltf-binary' });
     const formData = new FormData();
     formData.append('model', validBlob, 'paya-cube.glb');
@@ -125,28 +180,45 @@ async function runHttpTests() {
       body: formData,
     });
     const uploadData = (await uploadRes.json()) as any;
-    assert(uploadRes.status === 200, 'POST /api/upload with valid GLB returns HTTP 200');
+    assert(uploadRes.status === 200, 'POST /api/upload returns HTTP 200');
     assert(uploadData.success === true, 'Upload response contains success: true');
-    assert(Boolean(uploadData.modelId && uploadData.modelUrl), 'Upload response contains modelId and modelUrl');
+    assert(Boolean(uploadData.modelId && uploadData.modelUrl), 'Upload returns Android GLB modelUrl');
+    assert(Boolean(uploadData.usdzUrl), 'Upload returns iOS USDZ usdzUrl');
+    assert(uploadData.conversionStatus === 'success', 'USDZ conversionStatus is "success"');
     assert(uploadData.metadata?.meshCount === 1, 'Upload response contains verified metadata (meshCount: 1)');
 
-    // 3. Download GLB
-    const downloadRes = await fetch(`${baseUrl}${uploadData.modelUrl}`);
-    assert(downloadRes.status === 200, 'GET /api/models/:id/model.glb returns HTTP 200');
+    // 3. Android GLB Download
+    const downloadGlbRes = await fetch(`${baseUrl}${uploadData.modelUrl}`);
+    assert(downloadGlbRes.status === 200, 'GET /api/models/:id/model.glb returns HTTP 200');
     assert(
-      downloadRes.headers.get('content-type') === 'model/gltf-binary',
-      'Download response has Content-Type: model/gltf-binary'
+      downloadGlbRes.headers.get('content-type') === 'model/gltf-binary',
+      'GLB response has Content-Type: model/gltf-binary'
     );
-    const downloadedBuffer = await downloadRes.arrayBuffer();
+    const downloadedGlbBuffer = await downloadGlbRes.arrayBuffer();
     assert(
-      downloadedBuffer.byteLength === validBlob.size,
-      `Downloaded size (${downloadedBuffer.byteLength}) matches original (${validBlob.size})`
+      downloadedGlbBuffer.byteLength === validBlob.size,
+      `Downloaded GLB size (${downloadedGlbBuffer.byteLength}) matches original (${validBlob.size})`
     );
+
+    // 4. iOS USDZ Download (Apple AR Quick Look)
+    const downloadUsdzRes = await fetch(`${baseUrl}${uploadData.usdzUrl}`);
+    assert(downloadUsdzRes.status === 200, 'GET /api/models/:id/model.usdz returns HTTP 200');
+    assert(
+      downloadUsdzRes.headers.get('content-type') === 'model/vnd.usdz+zip',
+      'USDZ response has Content-Type: model/vnd.usdz+zip'
+    );
+    const downloadedUsdzBuffer = await downloadUsdzRes.arrayBuffer();
+    assert(downloadedUsdzBuffer.byteLength > 500, 'Downloaded USDZ has valid non-empty size');
+
+    // 5. Assets Descriptor
+    const assetsRes = await fetch(`${baseUrl}/api/models/${uploadData.modelId}/assets`);
+    const assetsData = (await assetsRes.json()) as any;
+    assert(assetsRes.status === 200 && assetsData.hasUsdz === true, 'GET /api/models/:id/assets returns unified assets descriptor');
 
     // Clean up created test model
     StorageService.deleteModel(uploadData.modelId);
 
-    // 4. Invalid GLB (Text file renamed to .glb) - Case 1
+    // 6. Invalid GLB (Text file renamed to .glb) - Case 1
     const textBlob = new Blob(['This is not a GLB file at all.'], { type: 'text/plain' });
     const fakeFormData = new FormData();
     fakeFormData.append('model', textBlob, 'fake.glb');
@@ -162,7 +234,7 @@ async function runHttpTests() {
       'Returns exact Case 1 message: "Invalid 3D model. Please upload a valid GLB file."'
     );
 
-    // 5. Corrupted GLB binary - Case 2
+    // 7. Corrupted GLB binary - Case 2
     const corruptedBuffer = Buffer.from(fs.readFileSync(validGlbPath));
     corruptedBuffer.fill(0x00, 20, 150); // Corrupt chunk
     const corruptBlob = new Blob([corruptedBuffer], { type: 'model/gltf-binary' });

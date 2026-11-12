@@ -6,8 +6,10 @@ import { OpenCameraButton } from './components/OpenCameraButton';
 import { ErrorCard } from './components/ErrorCard';
 import { WebXRViewer } from './components/WebXRViewer';
 import { preValidateGlbFile } from './lib/glbValidator';
-import { detectARCompatibility } from './lib/arCompatibility';
+import { resolveARPlatformRoute } from './lib/arPlatformRouter';
+import { isIOSDevice } from './lib/iosARCapability';
 import { launchGoogleSceneViewer } from './lib/sceneViewer';
+import { launchAppleQuickLook } from './lib/quickLookLauncher';
 import { AppState, ARMode, ModelMetadata } from './lib/types';
 
 export default function App() {
@@ -15,6 +17,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [modelUrl, setModelUrl] = useState<string>('');
+  const [usdzUrl, setUsdzUrl] = useState<string>('');
   const [metadata, setMetadata] = useState<ModelMetadata | undefined>();
   const [arMode, setArMode] = useState<ARMode>('none');
 
@@ -22,6 +25,7 @@ export default function App() {
   const handleFileSelect = async (file: File) => {
     // Reset previous errors
     setErrorMessage('');
+    const isIOS = isIOSDevice();
 
     // Step 2 – Client-side fast binary validation
     const preCheck = await preValidateGlbFile(file);
@@ -44,58 +48,121 @@ export default function App() {
         body: formData,
       });
 
-      // Show processing status
-      await new Promise((r) => setTimeout(r, 400));
-      setState('PROCESSING');
-      setStatusMessage('Processing Model');
+      if (isIOS) {
+        // iOS processing status progression
+        await new Promise((r) => setTimeout(r, 350));
+        setState('PROCESSING');
+        setStatusMessage('Validating GLB');
 
-      const response = await uploadPromise;
-      const data = await response.json();
+        const response = await uploadPromise;
+        const data = await response.json();
 
-      if (!response.ok || !data.success) {
-        if (data.errorType === 'INVALID_GLB') {
-          setErrorMessage('Invalid 3D model. Please upload a valid GLB file.');
-        } else {
-          setErrorMessage('Unable to process this 3D model. Please try another file.');
+        if (!response.ok || !data.success) {
+          if (data.errorType === 'INVALID_GLB') {
+            setErrorMessage('Invalid 3D model. Please upload a valid GLB file.');
+          } else {
+            setErrorMessage('Unable to process this 3D model. Please try another file.');
+          }
+          setState('ERROR');
+          return;
         }
-        setState('ERROR');
-        return;
+
+        setState('VALIDATING');
+        setStatusMessage('Preparing USDZ');
+        await new Promise((r) => setTimeout(r, 400));
+
+        setStatusMessage('Validating USDZ');
+        await new Promise((r) => setTimeout(r, 350));
+
+        // Step 4 – Checking AR Compatibility
+        setState('CHECKING_COMPATIBILITY');
+        setStatusMessage('Checking AR Compatibility');
+        await new Promise((r) => setTimeout(r, 350));
+
+        let finalUsdzUrl = data.usdzUrl;
+        if (finalUsdzUrl && window.location.protocol === 'https:' && finalUsdzUrl.startsWith('http://')) {
+          finalUsdzUrl = finalUsdzUrl.replace('http://', 'https://');
+        }
+
+        const route = await resolveARPlatformRoute(finalUsdzUrl);
+
+        if (!route.supported) {
+          setErrorMessage(
+            route.reason ||
+              'AR is not supported on your current iPhone or browser. Please try a compatible iPhone using Safari.'
+          );
+          setState('ERROR');
+          return;
+        }
+
+        let finalModelUrl = data.modelUrl;
+        if (window.location.protocol === 'https:' && finalModelUrl.startsWith('http://')) {
+          finalModelUrl = finalModelUrl.replace('http://', 'https://');
+        }
+
+        setModelUrl(finalModelUrl);
+        setUsdzUrl(finalUsdzUrl || '');
+        setMetadata(data.metadata);
+        setArMode(route.mode);
+        setState('READY');
+      } else {
+        // Android / Universal processing status progression
+        await new Promise((r) => setTimeout(r, 350));
+        setState('PROCESSING');
+        setStatusMessage('Processing Model');
+
+        const response = await uploadPromise;
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          if (data.errorType === 'INVALID_GLB') {
+            setErrorMessage('Invalid 3D model. Please upload a valid GLB file.');
+          } else {
+            setErrorMessage('Unable to process this 3D model. Please try another file.');
+          }
+          setState('ERROR');
+          return;
+        }
+
+        setState('VALIDATING');
+        setStatusMessage('Validating Geometry');
+        await new Promise((r) => setTimeout(r, 300));
+
+        setStatusMessage('Checking Materials');
+        await new Promise((r) => setTimeout(r, 300));
+
+        // Step 4 – Automatic AR Compatibility Detection
+        setState('CHECKING_COMPATIBILITY');
+        setStatusMessage('Checking AR Compatibility');
+        await new Promise((r) => setTimeout(r, 350));
+
+        let finalUsdzUrl = data.usdzUrl;
+        if (finalUsdzUrl && window.location.protocol === 'https:' && finalUsdzUrl.startsWith('http://')) {
+          finalUsdzUrl = finalUsdzUrl.replace('http://', 'https://');
+        }
+
+        const route = await resolveARPlatformRoute(finalUsdzUrl);
+
+        if (!route.supported) {
+          setErrorMessage(
+            route.reason ||
+              'AR is not supported on your current device or browser. Your device cannot use either of the supported AR modes. Please try a compatible Android device and browser.'
+          );
+          setState('ERROR');
+          return;
+        }
+
+        let finalModelUrl = data.modelUrl;
+        if (window.location.protocol === 'https:' && finalModelUrl.startsWith('http://')) {
+          finalModelUrl = finalModelUrl.replace('http://', 'https://');
+        }
+
+        setModelUrl(finalModelUrl);
+        setUsdzUrl(finalUsdzUrl || '');
+        setMetadata(data.metadata);
+        setArMode(route.mode);
+        setState('READY');
       }
-
-      // Validating geometry & materials
-      setState('VALIDATING');
-      setStatusMessage('Validating Geometry');
-      await new Promise((r) => setTimeout(r, 350));
-
-      setStatusMessage('Checking Materials');
-      await new Promise((r) => setTimeout(r, 350));
-
-      // Step 4 – Automatic AR Compatibility Detection
-      setState('CHECKING_COMPATIBILITY');
-      setStatusMessage('Checking AR Compatibility');
-      await new Promise((r) => setTimeout(r, 400));
-
-      const compat = await detectARCompatibility();
-
-      if (!compat.supported) {
-        setErrorMessage(
-          compat.reason ||
-            'AR is not supported on your current device or browser. Your device cannot use either of the supported AR modes. Please try a compatible Android device and browser.'
-        );
-        setState('ERROR');
-        return;
-      }
-
-      // Ensure modelUrl protocol matches secure page context
-      let finalModelUrl = data.modelUrl;
-      if (window.location.protocol === 'https:' && finalModelUrl.startsWith('http://')) {
-        finalModelUrl = finalModelUrl.replace('http://', 'https://');
-      }
-
-      setModelUrl(finalModelUrl);
-      setMetadata(data.metadata);
-      setArMode(compat.mode);
-      setState('READY');
     } catch (err) {
       console.error('Upload / validation failed:', err);
       setErrorMessage('Unable to process this 3D model. Please try another file.');
@@ -122,9 +189,21 @@ export default function App() {
         );
         setState('ERROR');
       }
+    } else if (arMode === 'quick-look') {
+      try {
+        await launchAppleQuickLook(usdzUrl);
+        // Quick Look is a native iOS system viewer; keep page ready on return
+        setState('READY');
+      } catch (err) {
+        console.error('Apple Quick Look launch failed:', err);
+        setErrorMessage(
+          'Unable to start the AR experience. Please check your browser and device compatibility.'
+        );
+        setState('ERROR');
+      }
     } else {
       setErrorMessage(
-        'AR is not supported on your current device or browser. Your device cannot use either of the supported AR modes. Please try a compatible Android device and browser.'
+        'AR is not supported on your current device or browser. Your device cannot use either of the supported AR modes.'
       );
       setState('ERROR');
     }
@@ -134,6 +213,7 @@ export default function App() {
   const handleRetry = useCallback(() => {
     setErrorMessage('');
     setModelUrl('');
+    setUsdzUrl('');
     setMetadata(undefined);
     setArMode('none');
     setState('INITIAL');

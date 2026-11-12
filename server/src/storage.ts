@@ -31,9 +31,11 @@ function cleanupOldFiles() {
 // Run cleanup every 30 minutes
 setInterval(cleanupOldFiles, 30 * 60 * 1000).unref();
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export class StorageService {
   /**
-   * Save a model buffer to storage with a secure UUID.
+   * Save a GLB model buffer to storage with a secure UUID.
    */
   static saveModel(buffer: Buffer): { modelId: string; filePath: string } {
     const modelId = uuidv4();
@@ -43,12 +45,23 @@ export class StorageService {
   }
 
   /**
-   * Get the file path of a model by ID.
+   * Save a USDZ model buffer associated with an existing modelId.
+   */
+  static saveUSDZ(modelId: string, buffer: Buffer): { filePath: string } | null {
+    if (!UUID_REGEX.test(modelId)) {
+      return null;
+    }
+    const filePath = path.join(UPLOAD_DIR, `${modelId}.usdz`);
+    fs.writeFileSync(filePath, buffer);
+    return { filePath };
+  }
+
+  /**
+   * Get the file path of a GLB model by ID.
    * Uses strict UUID validation to prevent path traversal.
    */
   static getModelPath(modelId: string): string | null {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(modelId)) {
+    if (!UUID_REGEX.test(modelId)) {
       return null;
     }
 
@@ -61,15 +74,50 @@ export class StorageService {
   }
 
   /**
-   * Delete a model from storage.
+   * Get the file path of a USDZ model by ID.
+   * Uses strict UUID validation to prevent path traversal.
+   */
+  static getUSDZPath(modelId: string): string | null {
+    if (!UUID_REGEX.test(modelId)) {
+      return null;
+    }
+
+    const filePath = path.join(UPLOAD_DIR, `${modelId}.usdz`);
+    if (fs.existsSync(filePath)) {
+      return filePath;
+    }
+
+    return null;
+  }
+
+  /**
+   * Check whether a USDZ asset exists for a given model ID.
+   */
+  static hasUSDZ(modelId: string): boolean {
+    return this.getUSDZPath(modelId) !== null;
+  }
+
+  /**
+   * Delete both GLB and USDZ model assets from storage.
    */
   static deleteModel(modelId: string): boolean {
-    const filePath = this.getModelPath(modelId);
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
+    if (!UUID_REGEX.test(modelId)) {
+      return false;
     }
-    return false;
+
+    let deleted = false;
+    const glbPath = path.join(UPLOAD_DIR, `${modelId}.glb`);
+    if (fs.existsSync(glbPath)) {
+      fs.unlinkSync(glbPath);
+      deleted = true;
+    }
+
+    const usdzPath = path.join(UPLOAD_DIR, `${modelId}.usdz`);
+    if (fs.existsSync(usdzPath)) {
+      fs.unlinkSync(usdzPath);
+      deleted = true;
+    }
+
+    return deleted;
   }
 }
-
