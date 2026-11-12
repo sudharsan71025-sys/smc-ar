@@ -18,7 +18,7 @@ const app = express();
 app.set('trust proxy', true);
 const HTTP_PORT = parseInt(process.env.PORT || '5000', 10);
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '5443', 10);
-const ENABLE_HTTPS = process.env.ENABLE_HTTPS !== 'false';
+const ENABLE_HTTPS = process.env.ENABLE_HTTPS !== 'false' && !process.env.RENDER;
 
 // Enable CORS for all requests (important for WebXR and model-viewer fetching GLBs)
 app.use(cors({
